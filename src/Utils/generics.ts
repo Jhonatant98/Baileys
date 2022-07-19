@@ -219,7 +219,7 @@ export const printQRIfNecessaryListener = (ev: CommonBaileysEventEmitter<any>, l
  * Use to ensure your WA connection is always on the latest version
  */
 export const fetchLatestBaileysVersion = async() => {
-	const URL = 'https://raw.githubusercontent.com/adiwajshing/Baileys/master/src/Defaults/baileys-version.json'
+	const URL = 'https://raw.githubusercontent.com/jhonatant98/Baileys/master/src/Defaults/baileys-version.json'
 	try {
 		const result = await axios.get<{ version: WAVersion }>(URL, { responseType: 'json' })
 		return {
