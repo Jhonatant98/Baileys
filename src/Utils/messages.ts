@@ -373,6 +373,8 @@ export const generateWAMessageContent = async(
 				productImage: imageMessage,
 			}
 		})
+	} else if('listReply' in message) {
+		m.listResponseMessage = { ...message.listReply }
 	} else {
 		m = await prepareWAMessageMedia(
 			message,
@@ -763,37 +765,4 @@ export const assertMediaContent = (content: proto.IMessage | null | undefined) =
 	}
 
 	return mediaContent
-}
-
-
-const generateContextInfo = () => {
-	const info: proto.IMessageContextInfo = {
-		deviceListMetadataVersion: 2,
-		deviceListMetadata: { }
-	}
-	return info
-}
-
-/**
- * this is an experimental patch to make buttons work
- * Don't know how it works, but it does for now
- */
-export const patchMessageForMdIfRequired = (message: proto.IMessage) => {
-	const requiresPatch = !!(
-		message.buttonsMessage
-		// || message.templateMessage
-		|| message.listMessage
-	)
-	if(requiresPatch) {
-		message = {
-			viewOnceMessage: {
-				message: {
-					messageContextInfo: generateContextInfo(),
-					...message
-				}
-			}
-		}
-	}
-
-	return message
 }

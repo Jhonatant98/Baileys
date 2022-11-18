@@ -2,7 +2,7 @@ import { AxiosRequestConfig } from 'axios'
 import type { Logger } from 'pino'
 import { proto } from '../../WAProto'
 import { AuthenticationCreds, BaileysEventEmitter, Chat, GroupMetadata, ParticipantAction, SignalKeyStoreWithTransaction, WAMessageStubType } from '../Types'
-import { downloadAndProcessHistorySyncNotification, normalizeMessageContent, toNumber } from '../Utils'
+import { downloadAndProcessHistorySyncNotification, getContentType, normalizeMessageContent, toNumber } from '../Utils'
 import { areJidsSameUser, jidNormalizedUser } from '../WABinary'
 
 type ProcessMessageContext = {
@@ -14,11 +14,15 @@ type ProcessMessageContext = {
 	options: AxiosRequestConfig<any>
 }
 
-const MSG_MISSED_CALL_TYPES = new Set([
+const REAL_MSG_STUB_TYPES = new Set([
 	WAMessageStubType.CALL_MISSED_GROUP_VIDEO,
 	WAMessageStubType.CALL_MISSED_GROUP_VOICE,
 	WAMessageStubType.CALL_MISSED_VIDEO,
 	WAMessageStubType.CALL_MISSED_VOICE
+])
+
+const REAL_MSG_REQ_ME_STUB_TYPES = new Set([
+	WAMessageStubType.GROUP_PARTICIPANT_ADD
 ])
 
 /** Cleans a received message to further processing */
@@ -48,12 +52,18 @@ export const cleanMessage = (message: proto.IWebMessageInfo, meId: string) => {
 	}
 }
 
-export const isRealMessage = (message: proto.IWebMessageInfo) => {
+export const isRealMessage = (message: proto.IWebMessageInfo, meId: string) => {
 	const normalizedContent = normalizeMessageContent(message.message)
+	const hasSomeContent = !!getContentType(normalizedContent)
 	return (
 		!!normalizedContent
-		|| MSG_MISSED_CALL_TYPES.has(message.messageStubType!)
+		|| REAL_MSG_STUB_TYPES.has(message.messageStubType!)
+		|| (
+			REAL_MSG_REQ_ME_STUB_TYPES.has(message.messageStubType!)
+			&& message.messageStubParameters?.some(p => areJidsSameUser(meId, p))
+		)
 	)
+	&& hasSomeContent
 	&& !normalizedContent?.protocolMessage
 	&& !normalizedContent?.reactionMessage
 }
@@ -77,21 +87,28 @@ const processMessage = async(
 	const { accountSettings } = creds
 
 	const chat: Partial<Chat> = { id: jidNormalizedUser(message.key.remoteJid!) }
+	const isRealMsg = isRealMessage(message, meId)
 
-	if(isRealMessage(message)) {
+	if(isRealMsg) {
 		chat.conversationTimestamp = toNumber(message.messageTimestamp)
 		// only increment unread count if not CIPHERTEXT and from another person
 		if(shouldIncrementChatUnread(message)) {
 			chat.unreadCount = (chat.unreadCount || 0) + 1
 		}
-
-		if(accountSettings?.unarchiveChats) {
-			chat.archived = false
-			chat.readOnly = false
-		}
 	}
 
 	const content = normalizeMessageContent(message.message)
+
+	// unarchive chat if it's a real message, or someone reacted to our message
+	// and we've the unarchive chats setting on
+	if(
+		(isRealMsg || content?.reactionMessage?.key?.fromMe)
+		&& accountSettings?.unarchiveChats
+	) {
+		chat.archived = false
+		chat.readOnly = false
+	}
+
 	const protocolMsg = content?.protocolMessage
 	if(protocolMsg) {
 		switch (protocolMsg.type) {
@@ -108,19 +125,19 @@ const processMessage = async(
 			}, 'got history notification')
 
 			if(process) {
-				const data = await downloadAndProcessHistorySyncNotification(
-					histNotification,
-					options
-				)
-
-				ev.emit('messaging-history.set', { ...data, isLatest })
-
 				ev.emit('creds.update', {
 					processedHistoryMessages: [
 						...(creds.processedHistoryMessages || []),
 						{ key: message.key, messageTimestamp: message.messageTimestamp }
 					]
 				})
+
+				const data = await downloadAndProcessHistorySyncNotification(
+					histNotification,
+					options
+				)
+
+				ev.emit('messaging-history.set', { ...data, isLatest })
 			}
 
 			break
