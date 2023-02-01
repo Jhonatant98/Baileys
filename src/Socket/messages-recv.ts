@@ -269,19 +269,26 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 
 		switch (nodeType) {
 		case 'privacy_token':
-			const tokenList = getBinaryNodeChildren(child, 'token')
-			for(const { attrs, content } of tokenList) {
-				const jid = attrs.jid
-				ev.emit('chats.update', [
-					{
-						id: jid,
-						tcToken: content as Buffer
-					}
-				])
-
-				logger.debug({ jid }, 'got privacy token update')
-			}
-
+                if ((child === null || child === void 0 ? void 0 : child.tag) === 'tokens') {
+                    const tokensSubElements = getAllBinaryNodeChildren(node)
+                    const presence = tokensSubElements.filter(token => token.attrs.type === 'trusted_contact')
+                        .map(async (token) => {
+                        return sock.sendNode({
+                            tag: 'presence',
+                            attrs: {
+                                id: sock.generateMessageTag(),
+                                to: node.attrs.from,
+                                type: 'subscribe'
+                            },
+                            content: [{
+                                    tag: 'tctoken',
+                                    content: token.content,
+                                    attrs: {}
+                                }]
+                        });
+                    });
+                    await Promise.all(presence);
+                }
 			break
 		case 'w:gp2':
 			handleGroupNotification(node.attrs.participant, child, result)
